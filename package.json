@@ -1,0 +1,53 @@
+{
+  "name": "@tokentest/ais",
+  "version": "0.1.0",
+  "description": "AIS adds a local protection layer for AI agents by masking secrets before cloud APIs see them",
+  "type": "module",
+  "bin": {
+    "ais": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src tsup.config.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build"
+  },
+  "keywords": [
+    "ais",
+    "ai",
+    "agent",
+    "security",
+    "privacy",
+    "secret",
+    "password",
+    "claude",
+    "codex"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^25.4.0",
+    "eslint": "^9.35.0",
+    "globals": "^16.4.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.43.0"
+  },
+  "dependencies": {
+    "keytar": "^7.9.0",
+    "node-pty": "^1.1.0"
+  }
+}
