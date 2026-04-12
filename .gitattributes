@@ -1,0 +1,2 @@
+# 任务运行日志不展示文本差异，避免在补丁里再次暴露原文
+TASK[[:space:]]docs/**/codex-run.log binary

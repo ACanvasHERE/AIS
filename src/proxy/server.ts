@@ -1816,7 +1816,7 @@ export class ProxyServer {
 
       await writeFile(outputPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
     } catch {
-      // Ignore capture-write failures so they never block real traffic.
+      // 证据落盘失败不能影响真实转发。
     }
   }
 }

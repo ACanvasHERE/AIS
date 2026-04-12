@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { AisStore, type AisStoreOptions } from './ais/index.js';
+import type { AutomationState, ProtectTool, UpdateChannel } from './automation/index.js';
 import { CombinedDetector, type CombinedDetectorOptions } from './detector/index.js';
 import { BidirectionalInterceptor } from './interceptor/bidirectional.js';
 import { createPtyWrapper, type PtyWrapperOptions } from './pty/wrapper.js';
@@ -63,8 +64,23 @@ export interface AisStats {
   restoredOutputs: number;
 }
 
-export interface AisOptions {
+export interface AisRuntimeOptions {
   ais?: (AisStoreOptions & { store?: AisStore }) | false;
+  automation?: {
+    path: string;
+    protect: {
+      enabled: boolean;
+      tools: Record<ProtectTool, boolean>;
+    };
+    state: AutomationState;
+    update: {
+      channel: UpdateChannel;
+      checkIntervalMinutes: number;
+      enabled: boolean;
+      silent: boolean;
+      skipCheck: boolean;
+    };
+  };
   cwd?: string;
   debug?: boolean;
   detectionWindow?: number;
@@ -404,7 +420,7 @@ class StdoutRestorer {
   }
 }
 
-export class AisAgent {
+export class AisRuntime {
   private readonly argvDetector: CombinedDetector;
   private readonly detector: CombinedDetector;
   private readonly detectionBuffers = {
@@ -426,7 +442,7 @@ export class AisAgent {
   };
   private running = false;
 
-  constructor(private readonly options: AisOptions = {}) {
+  constructor(private readonly options: AisRuntimeOptions = {}) {
     this.vault = new SessionVault(options.vault);
     this.detector = new CombinedDetector(options.detector);
     this.argvDetector = new CombinedDetector({
@@ -588,7 +604,7 @@ export class AisAgent {
   }
 
   private writeMessage(message: string): void {
-    const line = `[ais] ${message}`;
+    const line = `[AIS] ${message}`;
     process.stderr.write(`${line}\n`);
 
     if (!this.options.logFile) {

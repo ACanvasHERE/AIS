@@ -1,8 +1,9 @@
 import { parseArgs } from 'node:util';
 
+import { isProtectTool, type ProtectTool } from './automation/index.js';
 import { isSecretType, type SecretType } from './vault/types.js';
 
-const KNOWN_SUBCOMMANDS = new Set(['add', 'ais', 'config', 'list', 'remove', 'status']);
+const KNOWN_SUBCOMMANDS = new Set(['add', 'ais', 'config', 'list', 'protect', 'remove', 'status', 'update']);
 const OPTIONS_WITH_VALUES = ['--config', '-c', '--proxy-port'] as const;
 
 export interface CliGlobalOptions {
@@ -13,6 +14,7 @@ export interface CliGlobalOptions {
   noContext: boolean;
   noEntropy: boolean;
   proxyPort?: number;
+  skipUpdateCheck: boolean;
   version: boolean;
 }
 
@@ -25,12 +27,17 @@ export type CliInvocation =
       type: 'ais';
       secretType?: SecretType;
     }
-  | { type: 'config'; options: CliGlobalOptions }
+  | { action: 'get'; key: string; options: CliGlobalOptions; type: 'config' }
+  | { action: 'set'; key: string; options: CliGlobalOptions; type: 'config'; value: string }
+  | { action: 'show'; options: CliGlobalOptions; type: 'config' }
   | { type: 'error'; message: string }
   | { type: 'help'; options: CliGlobalOptions }
   | { type: 'list'; options: CliGlobalOptions }
+  | { action: 'off' | 'on'; options: CliGlobalOptions; target: ProtectTool | 'all'; type: 'protect' }
+  | { action: 'restore' | 'status'; options: CliGlobalOptions; type: 'protect' }
   | { type: 'remove'; name: string; options: CliGlobalOptions }
   | { type: 'status'; options: CliGlobalOptions }
+  | { type: 'update'; options: CliGlobalOptions }
   | { type: 'version'; options: CliGlobalOptions }
   | { type: 'wrap'; args: string[]; command: string; options: CliGlobalOptions };
 
@@ -104,6 +111,7 @@ function parseGlobalOptions(args: string[]): CliGlobalOptions {
       'no-entropy': { type: 'boolean' },
       'no-context': { type: 'boolean' },
       'proxy-port': { type: 'string' },
+      'skip-update-check': { type: 'boolean' },
     },
     allowPositionals: false,
     strict: true,
@@ -117,6 +125,7 @@ function parseGlobalOptions(args: string[]): CliGlobalOptions {
     noContext: values['no-context'] ?? false,
     noEntropy: values['no-entropy'] ?? false,
     proxyPort: parseProxyPort(values['proxy-port']),
+    skipUpdateCheck: values['skip-update-check'] ?? false,
     version: values.version ?? false,
   };
 }
@@ -189,8 +198,14 @@ function parseSubcommand(
       });
 
     case 'config':
+      return parseConfigSubcommand(args, options);
+
+    case 'protect':
+      return parseProtectSubcommand(args, options);
+
+    case 'update':
       return expectNoExtraArgs(command, args, {
-        type: 'config',
+        type: 'update',
         options,
       });
 
@@ -282,6 +297,139 @@ function parseAisSubcommand(args: string[], options: CliGlobalOptions): CliInvoc
   return {
     type: 'error',
     message: 'Usage: ais ais [show|exclude <id>|include <id>|exclude-type <type>|include-type <type>]',
+  };
+}
+
+function parseConfigSubcommand(args: string[], options: CliGlobalOptions): CliInvocation {
+  if (args.length === 0) {
+    return {
+      type: 'config',
+      action: 'show',
+      options,
+    };
+  }
+
+  const [action, key, value] = args;
+  if (action === 'show') {
+    if (args.length !== 1) {
+      return {
+        type: 'error',
+        message: 'Usage: ais config show',
+      };
+    }
+
+    return {
+      type: 'config',
+      action: 'show',
+      options,
+    };
+  }
+
+  if (action === 'get') {
+    if (args.length !== 2 || !key) {
+      return {
+        type: 'error',
+        message: 'Usage: ais config get <key>',
+      };
+    }
+
+    return {
+      type: 'config',
+      action: 'get',
+      key,
+      options,
+    };
+  }
+
+  if (action === 'set') {
+    if (args.length !== 3 || !key || value === undefined) {
+      return {
+        type: 'error',
+        message: 'Usage: ais config set <key> <value>',
+      };
+    }
+
+    return {
+      type: 'config',
+      action: 'set',
+      key,
+      options,
+      value,
+    };
+  }
+
+  return {
+    type: 'error',
+    message: 'Usage: ais config [show|get <key>|set <key> <value>]',
+  };
+}
+
+function parseProtectSubcommand(args: string[], options: CliGlobalOptions): CliInvocation {
+  if (args.length === 0) {
+    return {
+      type: 'protect',
+      action: 'status',
+      options,
+    };
+  }
+
+  const [action, target] = args;
+  if (action === 'status') {
+    if (args.length !== 1) {
+      return {
+        type: 'error',
+        message: 'Usage: ais protect status',
+      };
+    }
+
+    return {
+      type: 'protect',
+      action: 'status',
+      options,
+    };
+  }
+
+  if (action === 'restore') {
+    if (args.length !== 1) {
+      return {
+        type: 'error',
+        message: 'Usage: ais protect restore',
+      };
+    }
+
+    return {
+      type: 'protect',
+      action: 'restore',
+      options,
+    };
+  }
+
+  if (action === 'on' || action === 'off') {
+    if (args.length !== 2 || !target) {
+      return {
+        type: 'error',
+        message: `Usage: ais protect ${action} <tool|all>`,
+      };
+    }
+
+    if (target !== 'all' && !isProtectTool(target)) {
+      return {
+        type: 'error',
+        message: `Unknown protect target: ${target}`,
+      };
+    }
+
+    return {
+      type: 'protect',
+      action,
+      options,
+      target,
+    };
+  }
+
+  return {
+    type: 'error',
+    message: 'Usage: ais protect [status|on <tool|all>|off <tool|all>|restore]',
   };
 }
 

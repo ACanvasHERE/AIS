@@ -4,12 +4,23 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    ignores: ['dist/**', 'node_modules/**', 'TASK docs/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts', 'tsup.config.ts'],
+    files: ['src/**/*.ts', 'tests/**/*.ts', 'tsup.config.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    files: ['tests/**/*.mjs'],
     languageOptions: {
       globals: {
         ...globals.node,

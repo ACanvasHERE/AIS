@@ -73,7 +73,7 @@ export class KeychainStore {
     try {
       await keychain.deletePassword(this.SERVICE, this.ACCOUNT);
     } catch {
-      // Ignore delete failures so headless environments do not break the main flow.
+      // 忽略删除失败，避免在无图形环境下中断主流程。
     }
   }
 

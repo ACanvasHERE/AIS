@@ -111,7 +111,7 @@ export async function runPtyCommand(
     try {
       terminal.resize(getColumns(stdout), getRows(stdout));
     } catch {
-      // Ignore resize failures after the child process has already exited.
+      // 子进程已退出时，尺寸同步失败可直接忽略。
     }
   };
 

@@ -10,30 +10,14 @@ interface ContextRule {
 
 const INLINE_SPACING = String.raw`[^\S\r\n]*`;
 const ENGLISH_CONNECTORS = new Set(['and', 'or', 'but']);
-const HARD_VALUE_BOUNDARIES = new Set([
-  '\n',
-  '\r',
-  ',',
-  ';',
-  '\uFF0C',
-  '\uFF1B',
-  '\u3001',
-  ')',
-  ']',
-  '}',
-  '"',
-  '\'',
-]);
+const HARD_VALUE_BOUNDARIES = new Set(['\n', '\r', ',', ';', '，', '；', '、', ')', ']', '}', '"', '\'']);
 
 const CONTEXT_RULES: ContextRule[] = [
   {
     id: 'context_cn_keyword',
-    expression: new RegExp(
-      String.raw`(\u5BC6\u7801|\u5BC6\u94A5|\u53E3\u4EE4)${INLINE_SPACING}(?:\u662F|\u4E3A|=|:|\uFF1A)${INLINE_SPACING}`,
-      'g',
-    ),
+    expression: new RegExp(String.raw`(密码|密钥|口令)${INLINE_SPACING}(?:是|为|=|:|：)${INLINE_SPACING}`, 'g'),
     getType(keyword) {
-      return keyword === '\u5BC6\u94A5' ? 'APIKEY' : 'PASSWORD';
+      return keyword === '密钥' ? 'APIKEY' : 'PASSWORD';
     },
   },
   {
@@ -61,11 +45,11 @@ const CONTEXT_RULES: ContextRule[] = [
 function classifyKeyword(keyword: string): SecretType {
   const normalized = keyword.toLowerCase();
 
-  if (normalized.includes('password') || normalized.includes('passwd') || normalized.includes('\u53E3\u4EE4')) {
+  if (normalized.includes('password') || normalized.includes('passwd') || normalized.includes('口令')) {
     return 'PASSWORD';
   }
 
-  if (normalized.includes('api_key') || normalized.includes('api-key') || normalized.includes('\u5BC6\u94A5')) {
+  if (normalized.includes('api_key') || normalized.includes('api-key') || normalized.includes('密钥')) {
     return 'APIKEY';
   }
 
@@ -149,11 +133,11 @@ function readFieldName(input: string, start: number): number {
 
 function readFieldOperator(input: string, start: number): number {
   const singleCharacterOperator = input[start];
-  if (singleCharacterOperator === '=' || singleCharacterOperator === ':' || singleCharacterOperator === '\uFF1A') {
+  if (singleCharacterOperator === '=' || singleCharacterOperator === ':' || singleCharacterOperator === '：') {
     return start + 1;
   }
 
-  if (singleCharacterOperator === '\u662F' || singleCharacterOperator === '\u4E3A') {
+  if (singleCharacterOperator === '是' || singleCharacterOperator === '为') {
     return start + 1;
   }
 

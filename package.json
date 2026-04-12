@@ -11,6 +11,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ACanvasHERE/AIS.git"
+  },
+  "homepage": "https://github.com/ACanvasHERE/AIS#readme",
+  "bugs": {
+    "url": "https://github.com/ACanvasHERE/AIS/issues"
+  },
   "files": [
     "dist",
     "LICENSE"
@@ -19,6 +27,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "lint": "eslint src tsup.config.ts",
+    "postinstall": "node dist/postinstall.js",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run lint && npm run typecheck && npm run build"
   },

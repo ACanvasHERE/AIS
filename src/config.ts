@@ -4,6 +4,11 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { DEFAULT_AIS_STATE_PATH_DISPLAY } from './ais/state.js';
+import {
+  DEFAULT_AUTOMATION_STATE_PATH_DISPLAY,
+  isUpdateChannel,
+  type UpdateChannel,
+} from './automation/index.js';
 import { isSecretType, type SecretType } from './vault/types.js';
 
 const CONFIG_FILE_MODE = 0o600;
@@ -21,6 +26,9 @@ export interface AisConfig {
     recentLimit: number;
     statePath: string;
   };
+  automation: {
+    statePath: string;
+  };
   customPatterns: CustomPatternConfig[];
   detection: {
     context: boolean;
@@ -31,9 +39,23 @@ export interface AisConfig {
   display: {
     debug: boolean;
   };
+  protect: {
+    enabled: boolean;
+    tools: {
+      claude: boolean;
+      codex: boolean;
+      openclaw: boolean;
+    };
+  };
   storage: {
     persistSecrets: boolean;
     vaultPath: string;
+  };
+  update: {
+    channel: UpdateChannel;
+    checkIntervalMinutes: number;
+    enabled: boolean;
+    silent: boolean;
   };
 }
 
@@ -49,6 +71,9 @@ export function createDefaultConfig(): AisConfig {
       recentLimit: 20,
       statePath: DEFAULT_AIS_STATE_PATH_DISPLAY,
     },
+    automation: {
+      statePath: DEFAULT_AUTOMATION_STATE_PATH_DISPLAY,
+    },
     customPatterns: [],
     detection: {
       patterns: true,
@@ -59,9 +84,23 @@ export function createDefaultConfig(): AisConfig {
     display: {
       debug: false,
     },
+    protect: {
+      enabled: true,
+      tools: {
+        claude: true,
+        codex: true,
+        openclaw: true,
+      },
+    },
     storage: {
       persistSecrets: false,
       vaultPath: DEFAULT_VAULT_PATH_DISPLAY,
+    },
+    update: {
+      channel: 'latest',
+      checkIntervalMinutes: 1440,
+      enabled: true,
+      silent: true,
     },
   };
 }
@@ -160,6 +199,14 @@ function mergeConfig(raw: unknown): AisConfig {
     }
   }
 
+  if ('automation' in raw) {
+    const automation = expectObject(raw.automation, 'automation');
+
+    if ('statePath' in automation) {
+      config.automation.statePath = expectString(automation.statePath, 'automation.statePath');
+    }
+  }
+
   if ('display' in raw) {
     const display = expectObject(raw.display, 'display');
 
@@ -177,6 +224,53 @@ function mergeConfig(raw: unknown): AisConfig {
 
     if ('vaultPath' in storage) {
       config.storage.vaultPath = expectString(storage.vaultPath, 'storage.vaultPath');
+    }
+  }
+
+  if ('update' in raw) {
+    const update = expectObject(raw.update, 'update');
+
+    if ('enabled' in update) {
+      config.update.enabled = expectBoolean(update.enabled, 'update.enabled');
+    }
+
+    if ('channel' in update) {
+      config.update.channel = expectUpdateChannel(update.channel, 'update.channel');
+    }
+
+    if ('checkIntervalMinutes' in update) {
+      config.update.checkIntervalMinutes = expectPositiveInteger(
+        update.checkIntervalMinutes,
+        'update.checkIntervalMinutes',
+      );
+    }
+
+    if ('silent' in update) {
+      config.update.silent = expectBoolean(update.silent, 'update.silent');
+    }
+  }
+
+  if ('protect' in raw) {
+    const protect = expectObject(raw.protect, 'protect');
+
+    if ('enabled' in protect) {
+      config.protect.enabled = expectBoolean(protect.enabled, 'protect.enabled');
+    }
+
+    if ('tools' in protect) {
+      const tools = expectObject(protect.tools, 'protect.tools');
+
+      if ('claude' in tools) {
+        config.protect.tools.claude = expectBoolean(tools.claude, 'protect.tools.claude');
+      }
+
+      if ('codex' in tools) {
+        config.protect.tools.codex = expectBoolean(tools.codex, 'protect.tools.codex');
+      }
+
+      if ('openclaw' in tools) {
+        config.protect.tools.openclaw = expectBoolean(tools.openclaw, 'protect.tools.openclaw');
+      }
     }
   }
 
@@ -238,6 +332,14 @@ function expectPositiveInteger(value: unknown, path: string): number {
   }
 
   return parsed;
+}
+
+function expectUpdateChannel(value: unknown, path: string): UpdateChannel {
+  if (typeof value !== 'string' || !isUpdateChannel(value)) {
+    throw new Error(`Failed to load config: ${path} must be "latest" or "next"`);
+  }
+
+  return value;
 }
 
 function expectObject(value: unknown, path: string): Record<string, unknown> {

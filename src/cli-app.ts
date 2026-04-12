@@ -1,8 +1,17 @@
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
+import { pathToFileURL } from 'node:url';
 
 import { AisStore, type AisState } from './ais/index.js';
-import { AisAgent, type AisOptions, type AisStats } from './ais-agent.js';
+import {
+  PROTECT_TOOLS,
+  loadAutomationState,
+  saveAutomationState,
+  type AutomationState,
+  type LoadedAutomationState,
+  type ProtectTool,
+} from './automation/index.js';
+import { AisRuntime, type AisStats, type AisRuntimeOptions } from './ais-runtime.js';
 import { parseCliInvocation, type CliGlobalOptions } from './cli-options.js';
 import {
   createDefaultConfig,
@@ -12,8 +21,22 @@ import {
   type AisConfig,
 } from './config.js';
 import { PatternDetector } from './detector/pattern-detector.js';
-import { VERSION } from './index.js';
+import { getPackageInfo, VERSION } from './package-info.js';
+import {
+  refreshProtectRuntime,
+  resolveProtectedCommand,
+  restoreProtectRuntime,
+  syncProtectRuntime,
+  type ProtectRuntimeOptions,
+  type ProtectShellRunner,
+} from './protect/index.js';
 import { EncryptedVault, StorageManager } from './storage/index.js';
+import {
+  maybeRunStartupSelfUpdate,
+  resolveCurrentPackageRootFromUrl,
+  runManualSelfUpdate,
+  type UpdateCommandRunner,
+} from './update/self-update.js';
 import type { SecretType, VaultEntry } from './vault/types.js';
 
 const HELP_TEXT = `AIS - Local protection for AI agent secrets
@@ -22,9 +45,11 @@ Usage:
   ais <command> [args...]           Wrap an AI agent with secret protection
   ais add <name> [secret]           Register a secret in the vault
   ais ais [show]                    Open the AIS TUI for recent records
+  ais protect <action>              Manage default protection preferences
   ais list                          List registered secrets
   ais remove <name>                 Remove a secret from the vault
   ais status                        Show current local status
+  ais update                        Check now and install a newer version when available
   ais config                        View or create configuration
 
 Options:
@@ -33,6 +58,7 @@ Options:
   -d, --debug          Enable debug output
   -c, --config <path>  Use a custom config file
   --proxy-port <port>  Use a fixed local proxy port
+  --skip-update-check  Skip the automatic update check for this run
   --dry-run            Detect but do not replace
   --no-entropy         Disable entropy detection
   --no-context         Disable context keyword detection
@@ -41,22 +67,31 @@ Examples:
   ais claude
   ais -- codex --sandbox danger-full-access
   ais ais
+  ais protect off codex
+  ais config set update.channel next
   ais add github-token
   ais add github-token ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`;
 
-type AisAgentLike = {
+type AisRuntimeLike = {
   getStats(): AisStats;
   start(command: string, args: string[]): Promise<void>;
 };
 
 export interface CliRunOptions {
-  createAisAgent?: (options: AisOptions) => AisAgentLike;
+  createAisRuntime?: (options: AisRuntimeOptions) => AisRuntimeLike;
+  currentCliPath?: string;
   env?: NodeJS.ProcessEnv;
+  fetch?: typeof fetch;
   now?: () => number;
+  protectNodePath?: string;
+  protectShellPath?: string;
+  protectShellRunner?: ProtectShellRunner;
   readSecret?: (name: string) => Promise<string>;
   stderr?: Pick<Writable, 'write'>;
   stdin?: NodeJS.ReadStream;
   stdout?: Pick<Writable, 'write'>;
+  updateCommandRunner?: UpdateCommandRunner;
+  updateCurrentPackageRoot?: string;
 }
 
 export async function runCli(args: string[], options: CliRunOptions = {}): Promise<number> {
@@ -83,16 +118,21 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
 
     const loadedConfig = await loadConfig(invocation.options.config);
     const config = loadedConfig.config;
+    const loadedAutomationState = await loadAutomationState(config.automation.statePath);
+    const packageInfo = getPackageInfo();
+    const updateCurrentPackageRoot = resolveUpdateCurrentPackageRoot(options, packageInfo.name);
     const storageManager = new StorageManager({
       env,
       persistDetectedSecrets: config.storage.persistSecrets,
       vaultPath: expandHomePath(config.storage.vaultPath),
     });
+    const protectRuntimeOptions = buildProtectRuntimeOptions(env, options);
     const aisStore = new AisStore({
       path: config.ais.statePath,
       recentLimit: config.ais.recentLimit,
     });
     await aisStore.load();
+    writeAutomationStateRecoveryWarning(stderr, loadedAutomationState);
 
     switch (invocation.type) {
       case 'ais': {
@@ -137,13 +177,59 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
       }
 
       case 'config': {
-        if (!loadedConfig.exists) {
-          await saveConfig(config, loadedConfig.path);
+        if (invocation.action === 'show') {
+          if (!loadedConfig.exists) {
+            await saveConfig(config, loadedConfig.path);
+          }
+
+          writeLine(stdout, `Config: ${loadedConfig.path}`);
+          writeLine(stdout, JSON.stringify(config, null, 2));
+          return 0;
         }
 
-        writeLine(stdout, `Config: ${loadedConfig.path}`);
-        writeLine(stdout, JSON.stringify(config, null, 2));
+        if (invocation.action === 'get') {
+          const value = readConfigValue(config, invocation.key);
+          writeLine(stdout, formatConfigValue(invocation.key, value));
+          return 0;
+        }
+
+        const nextConfig = setConfigValue(config, invocation.key, invocation.value);
+        await saveConfig(nextConfig, loadedConfig.path);
+        writeLine(stdout, `Config updated: ${formatConfigValue(invocation.key, readConfigValue(nextConfig, invocation.key))}`);
         return 0;
+      }
+
+      case 'protect': {
+        if (invocation.action === 'status') {
+          const refreshed = await refreshProtectRuntime(loadedAutomationState.state, protectRuntimeOptions);
+          if (refreshed.changed) {
+            await saveAutomationState(refreshed.state, loadedAutomationState.path);
+          }
+
+          writeLine(stdout, formatProtectStatus(config, { ...loadedAutomationState, state: refreshed.state }));
+          return 0;
+        }
+
+        if (invocation.action === 'restore') {
+          const restored = await restoreProtectRuntime(config, loadedAutomationState.state, protectRuntimeOptions);
+          await saveConfig(restored.config, loadedConfig.path);
+          await saveAutomationState(restored.state, loadedAutomationState.path);
+          writeProtectMessages(stderr, restored);
+          writeLine(stdout, 'Protect restored to the original command layout.');
+          return restored.errors.length === 0 ? 0 : 1;
+        }
+
+        if (invocation.action !== 'on' && invocation.action !== 'off') {
+          throw new Error(`Unsupported protect action: ${String(invocation.action)}`);
+        }
+
+        const nextConfig = applyProtectPreference(config, invocation.action, invocation.target);
+        const syncedProtect = await syncProtectRuntime(nextConfig, loadedAutomationState.state, protectRuntimeOptions);
+        await saveConfig(nextConfig, loadedConfig.path);
+        await saveAutomationState(syncedProtect.state, loadedAutomationState.path);
+        writeProtectMessages(stderr, syncedProtect);
+        writeLine(stdout, `Protect updated: ${invocation.target}=${invocation.action === 'on' ? 'on' : 'off'}`);
+        return syncedProtect.errors.length === 0 ? 0 : 1;
       }
 
       case 'add': {
@@ -160,10 +246,7 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
         }
 
         if (invocation.secret) {
-          writeLine(
-            stderr,
-            'Warning: the secret was passed on the command line and may be stored in shell history. Remove the history entry after this command.',
-          );
+          writeLine(stderr, '注意：secret 已出现在命令历史中，请删除对应的 history 记录。');
         }
 
         const vault = await storageManager.initialize();
@@ -208,8 +291,52 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
 
       case 'status': {
         const vault = await storageManager.initialize();
-        writeLine(stdout, formatStatus(vault.snapshot(), loadedConfig.path, storageManager.getVaultPath(), aisStore.getPath()));
+        const refreshed = await refreshProtectRuntime(loadedAutomationState.state, protectRuntimeOptions);
+        if (refreshed.changed) {
+          await saveAutomationState(refreshed.state, loadedAutomationState.path);
+        }
+        writeLine(
+          stdout,
+          formatStatus(
+            vault.snapshot(),
+            loadedConfig.path,
+            storageManager.getVaultPath(),
+            aisStore.getPath(),
+            {
+              ...loadedAutomationState,
+              state: refreshed.state,
+            },
+            config,
+          ),
+        );
         return 0;
+      }
+
+      case 'update': {
+        const updateResult = await runManualSelfUpdate(
+          loadedAutomationState.state,
+          {
+            channel: config.update.channel,
+          },
+          {
+            automationStatePath: loadedAutomationState.path,
+            commandRunner: options.updateCommandRunner,
+            currentPackageRoot: updateCurrentPackageRoot,
+            env,
+            fetchImpl: options.fetch,
+            now: options.now,
+            packageInfo,
+          },
+        );
+
+        if (updateResult.changed) {
+          await saveAutomationState(updateResult.state, loadedAutomationState.path);
+        }
+        if (updateResult.message) {
+          writeLine(updateResult.status === 'failed' ? stderr : stdout, updateResult.message);
+        }
+
+        return updateResult.status === 'failed' ? 1 : 0;
       }
 
       case 'wrap': {
@@ -218,7 +345,31 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
           writeWelcome(stdout, storageManager.getVaultPath());
         }
 
-        const agent = (options.createAisAgent ?? ((nextOptions) => new AisAgent(nextOptions)))({
+        const updateCheck = await maybeRunStartupSelfUpdate(
+          loadedAutomationState.state,
+          {
+            ...config.update,
+            skipCheck: invocation.options.skipUpdateCheck,
+          },
+          {
+            automationStatePath: loadedAutomationState.path,
+            commandRunner: options.updateCommandRunner,
+            currentPackageRoot: updateCurrentPackageRoot,
+            env,
+            fetchImpl: options.fetch,
+            now: options.now,
+            packageInfo,
+          },
+        );
+        const automationState = updateCheck.state;
+        if (updateCheck.changed) {
+          await saveAutomationState(automationState, loadedAutomationState.path);
+        }
+        if (updateCheck.message) {
+          writeLine(stderr, updateCheck.message);
+        }
+
+        const aisRuntime = (options.createAisRuntime ?? ((nextOptions) => new AisRuntime(nextOptions)))({
           debug: invocation.options.debug || config.display.debug,
           detector: buildDetectorOptions(config, invocation.options),
           dryRun: invocation.options.dryRun,
@@ -240,9 +391,21 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
             path: aisStore.getPath(),
             store: aisStore,
           },
+          automation: {
+            path: loadedAutomationState.path,
+            protect: config.protect,
+            state: automationState,
+            update: {
+              ...config.update,
+              skipCheck: invocation.options.skipUpdateCheck,
+            },
+          },
         });
 
-        await agent.start(invocation.command, invocation.args);
+        const resolvedCommand = await resolveProtectedCommand(invocation.command, env, {
+          homeDir: env.HOME,
+        });
+        await aisRuntime.start(resolvedCommand, invocation.args);
         return 0;
       }
     }
@@ -253,7 +416,7 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
   }
 }
 
-function buildDetectorOptions(config: AisConfig, options: CliGlobalOptions): AisOptions['detector'] {
+function buildDetectorOptions(config: AisConfig, options: CliGlobalOptions): AisRuntimeOptions['detector'] {
   return {
     customPatterns: config.customPatterns,
     enableContext: options.noContext ? false : config.detection.context,
@@ -261,6 +424,50 @@ function buildDetectorOptions(config: AisConfig, options: CliGlobalOptions): Ais
     enablePattern: config.detection.patterns,
     entropyThreshold: config.detection.entropyThreshold,
   };
+}
+
+function resolveUpdateCurrentPackageRoot(options: CliRunOptions, packageName: string): string | undefined {
+  if (options.updateCurrentPackageRoot) {
+    return options.updateCurrentPackageRoot;
+  }
+
+  const candidatePath = options.currentCliPath ?? process.argv[1];
+  if (!candidatePath) {
+    return undefined;
+  }
+
+  try {
+    return resolveCurrentPackageRootFromUrl(pathToFileURL(candidatePath).href, packageName);
+  } catch {
+    return undefined;
+  }
+}
+
+function buildProtectRuntimeOptions(env: NodeJS.ProcessEnv, options: CliRunOptions): ProtectRuntimeOptions {
+  return {
+    aisCliPath: options.currentCliPath ?? process.argv[1],
+    env,
+    nodePath: options.protectNodePath,
+    now: options.now,
+    shellPath: options.protectShellPath,
+    shellRunner: options.protectShellRunner,
+  };
+}
+
+function writeProtectMessages(
+  stderr: Pick<Writable, 'write'>,
+  result: {
+    errors: string[];
+    warnings: string[];
+  },
+): void {
+  for (const warning of result.warnings) {
+    writeLine(stderr, warning);
+  }
+
+  for (const error of result.errors) {
+    writeLine(stderr, error);
+  }
 }
 
 function formatList(entries: VaultEntry[], now: () => number): string {
@@ -324,7 +531,14 @@ function formatRelativeAge(createdAt: number, now: number): string {
   return `${Math.floor(diff / day)}d ago`;
 }
 
-function formatStatus(entries: VaultEntry[], configPath: string, vaultPath: string, aisStatePath: string): string {
+function formatStatus(
+  entries: VaultEntry[],
+  configPath: string,
+  vaultPath: string,
+  aisStatePath: string,
+  automationState: LoadedAutomationState,
+  config: AisConfig,
+): string {
   const namedCount = entries.filter((entry) => entry.name).length;
 
   return [
@@ -333,7 +547,188 @@ function formatStatus(entries: VaultEntry[], configPath: string, vaultPath: stri
     `Config: ${configPath}`,
     `Vault file: ${vaultPath}`,
     `AIS state: ${aisStatePath}`,
+    `Automation state: ${automationState.path}`,
+    formatUpdateStatus(config, automationState.state),
+    formatProtectSummary(config, automationState.state),
   ].join('\n');
+}
+
+function formatUpdateStatus(config: AisConfig, state: AutomationState): string {
+  const checkedAt = state.update.lastCheckedAt ? new Date(state.update.lastCheckedAt).toISOString() : 'never';
+  const remoteVersion = state.update.lastRemoteVersion ?? '-';
+  const localVersion = state.update.lastLocalVersion ?? VERSION;
+
+  return [
+    `Update: ${config.update.enabled ? 'enabled' : 'disabled'} | channel=${config.update.channel} | every=${config.update.checkIntervalMinutes}m | silent=${config.update.silent ? 'yes' : 'no'} | last=${state.update.lastResult}`,
+    `Update detail: checkedAt=${checkedAt} | local=${localVersion} | remote=${remoteVersion} | skipNext=${state.update.skipNextCheck ? 'yes' : 'no'}`,
+  ].join('\n');
+}
+
+function formatProtectSummary(config: AisConfig, state: AutomationState): string {
+  const toolLines = PROTECT_TOOLS.map((tool) => formatProtectToolLine(tool, config, state));
+  return [
+    `Protect: ${config.protect.enabled ? 'enabled' : 'disabled'}`,
+    ...toolLines,
+  ].join('\n');
+}
+
+function formatProtectStatus(config: AisConfig, automationState: LoadedAutomationState): string {
+  return [
+    `Automation state: ${automationState.path}`,
+    formatProtectSummary(config, automationState.state),
+  ].join('\n');
+}
+
+function formatProtectToolLine(tool: ProtectTool, config: AisConfig, state: AutomationState): string {
+  const runtime = state.protect.tools[tool];
+  const desired = config.protect.enabled && config.protect.tools[tool] ? 'on' : 'off';
+  const applied = runtime.installed ? 'yes' : 'no';
+  const suspended = runtime.suspended ? 'yes' : 'no';
+  const restoreParts = [
+    runtime.managedPath ? `managed=${runtime.managedPath}` : '',
+    runtime.backupPath ? `backup=${runtime.backupPath}` : '',
+    runtime.originalCommandPath ? `original=${runtime.originalCommandPath}` : '',
+  ].filter(Boolean);
+  const restore = restoreParts.length === 0 ? 'restore=empty' : `restore=${restoreParts.join(',')}`;
+  const error = runtime.lastError ? ` | error=${runtime.lastError}` : '';
+
+  return `Protect ${tool}: desired=${desired} | applied=${applied} | suspended=${suspended} | ${restore}${error}`;
+}
+
+function writeAutomationStateRecoveryWarning(
+  stderr: Pick<Writable, 'write'>,
+  loadedAutomationState: LoadedAutomationState,
+): void {
+  if (!loadedAutomationState.recoveryReason) {
+    return;
+  }
+
+  const recoveredFrom = loadedAutomationState.recoveredFrom ?? loadedAutomationState.path;
+  writeLine(
+    stderr,
+    `Automation state was reset after a load failure (${loadedAutomationState.recoveryReason}). Previous file: ${recoveredFrom}`,
+  );
+}
+
+function readConfigValue(config: AisConfig, key: string): boolean | number | string {
+  switch (key) {
+    case 'automation.statePath':
+      return config.automation.statePath;
+    case 'protect.enabled':
+      return config.protect.enabled;
+    case 'protect.tools.claude':
+      return config.protect.tools.claude;
+    case 'protect.tools.codex':
+      return config.protect.tools.codex;
+    case 'protect.tools.openclaw':
+      return config.protect.tools.openclaw;
+    case 'update.channel':
+      return config.update.channel;
+    case 'update.checkIntervalMinutes':
+      return config.update.checkIntervalMinutes;
+    case 'update.enabled':
+      return config.update.enabled;
+    case 'update.silent':
+      return config.update.silent;
+    default:
+      throw new Error(`Unsupported config key: ${key}`);
+  }
+}
+
+function setConfigValue(config: AisConfig, key: string, rawValue: string): AisConfig {
+  const nextConfig = structuredClone(config);
+
+  switch (key) {
+    case 'automation.statePath':
+      nextConfig.automation.statePath = rawValue;
+      return nextConfig;
+    case 'protect.enabled':
+      nextConfig.protect.enabled = parseBooleanValue(rawValue, key);
+      return nextConfig;
+    case 'protect.tools.claude':
+      nextConfig.protect.tools.claude = parseBooleanValue(rawValue, key);
+      return nextConfig;
+    case 'protect.tools.codex':
+      nextConfig.protect.tools.codex = parseBooleanValue(rawValue, key);
+      return nextConfig;
+    case 'protect.tools.openclaw':
+      nextConfig.protect.tools.openclaw = parseBooleanValue(rawValue, key);
+      return nextConfig;
+    case 'update.channel':
+      if (rawValue !== 'latest' && rawValue !== 'next') {
+        throw new Error('update.channel must be "latest" or "next".');
+      }
+
+      nextConfig.update.channel = rawValue;
+      return nextConfig;
+    case 'update.checkIntervalMinutes':
+      nextConfig.update.checkIntervalMinutes = parsePositiveIntegerValue(rawValue, key);
+      return nextConfig;
+    case 'update.enabled':
+      nextConfig.update.enabled = parseBooleanValue(rawValue, key);
+      return nextConfig;
+    case 'update.silent':
+      nextConfig.update.silent = parseBooleanValue(rawValue, key);
+      return nextConfig;
+    default:
+      throw new Error(`Unsupported config key: ${key}`);
+  }
+}
+
+function formatConfigValue(key: string, value: boolean | number | string): string {
+  return `${key}=${value}`;
+}
+
+function parseBooleanValue(rawValue: string, key: string): boolean {
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === 'true') {
+    return true;
+  }
+
+  if (normalized === 'false') {
+    return false;
+  }
+
+  throw new Error(`${key} must be "true" or "false".`);
+}
+
+function parsePositiveIntegerValue(rawValue: string, key: string): number {
+  if (!/^\d+$/.test(rawValue)) {
+    throw new Error(`${key} must be a positive integer.`);
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (parsed < 1) {
+    throw new Error(`${key} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function applyProtectPreference(
+  config: AisConfig,
+  action: 'off' | 'on',
+  target: ProtectTool | 'all',
+): AisConfig {
+  const nextConfig = structuredClone(config);
+
+  if (target === 'all') {
+    nextConfig.protect.enabled = action === 'on';
+    if (action === 'on') {
+      nextConfig.protect.tools.claude = true;
+      nextConfig.protect.tools.codex = true;
+      nextConfig.protect.tools.openclaw = true;
+    }
+
+    return nextConfig;
+  }
+
+  if (action === 'on') {
+    nextConfig.protect.enabled = true;
+  }
+
+  nextConfig.protect.tools[target] = action === 'on';
+  return nextConfig;
 }
 
 function inferSecretType(name: string, secret: string, config: AisConfig): SecretType {
@@ -499,7 +894,7 @@ async function runAisTui(store: AisStore, configPath: string): Promise<void> {
     while (true) {
       writeLine(process.stdout, formatAisDashboard(store.getState(), configPath, store.getPath()));
       const answer = (await rl.question(
-        'AIS> Enter a number to toggle one item, or type type:PASSWORD to toggle a full type. Press Enter to exit: ',
+        'AIS> 输入编号切换某条，输入 type:PASSWORD 切换某一类，直接回车退出: ',
       )).trim();
       if (answer.length === 0 || answer.toLowerCase() === 'q') {
         break;

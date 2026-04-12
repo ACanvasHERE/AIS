@@ -2,12 +2,12 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig([
   {
-    entry: ['src/cli.ts'],
+    entry: ['src/cli.ts', 'src/postinstall.ts'],
     format: ['esm'],
     platform: 'node',
     clean: true,
     dts: true,
-    sourcemap: false,
+    sourcemap: true,
     banner: {
       js: '#!/usr/bin/env node',
     },
@@ -18,6 +18,6 @@ export default defineConfig([
     platform: 'node',
     clean: false,
     dts: true,
-    sourcemap: false,
+    sourcemap: true,
   },
 ]);

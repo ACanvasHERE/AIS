@@ -1,5 +1,14 @@
+.claude/worktrees/
 .DS_Store
+.playwright-mcp/
 node_modules/
 dist/
 *.tgz
 .env
+test_api.py
+test_vault_api.py
+test_anthropic_vault.py
+
+# 自动生成的任务运行日志只保留在本机，不进入仓库
+TASK[[:space:]]docs/**/codex-run.log
+loop[[:space:]]docs/**/codex-run.log
