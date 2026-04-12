@@ -20,7 +20,7 @@
 ## 一行安装
 
 ```bash
-npm install -g @tokentest/ais
+npm install -g @tokentestai/ais
 ```
 
 安装完成后，使用的命令名是 `ais`。

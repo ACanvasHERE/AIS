@@ -20,7 +20,7 @@ L’objectif de `AIS` est simple :
 ## Installation En Une Ligne
 
 ```bash
-npm install -g @tokentest/ais
+npm install -g @tokentestai/ais
 ```
 
 Après installation, la commande à utiliser est `ais`.

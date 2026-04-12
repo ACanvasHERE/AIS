@@ -20,7 +20,7 @@
 ## Install In One Line
 
 ```bash
-npm install -g @tokentest/ais
+npm install -g @tokentestai/ais
 ```
 
 After installation, the command name is `ais`.

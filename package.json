@@ -1,5 +1,5 @@
 {
-  "name": "@tokentest/ais",
+  "name": "@tokentestai/ais",
   "version": "0.1.0",
   "description": "AIS adds a local protection layer for AI agents by masking secrets before cloud APIs see them",
   "type": "module",

@@ -20,7 +20,7 @@
 ## 한 줄 설치
 
 ```bash
-npm install -g @tokentest/ais
+npm install -g @tokentestai/ais
 ```
 
 설치 후 실행 명령어는 `ais` 입니다.

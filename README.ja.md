@@ -20,7 +20,7 @@
 ## 1 行でインストール
 
 ```bash
-npm install -g @tokentest/ais
+npm install -g @tokentestai/ais
 ```
 
 インストール後のコマンド名は `ais` です。
