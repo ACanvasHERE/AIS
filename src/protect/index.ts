@@ -3,6 +3,7 @@ import { constants, existsSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, readFile, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   PROTECT_TOOLS,
@@ -219,7 +220,7 @@ function createContext(options: ProtectRuntimeOptions): ProtectContext {
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? env.HOME ?? homedir();
   return {
-    aisCliPath: options.aisCliPath ?? resolve(process.argv[1] ?? join(process.cwd(), 'dist', 'cli.js')),
+    aisCliPath: options.aisCliPath ?? resolveManagedCliPath(),
     backupRootDir: join(homeDir, '.ais', 'backups'),
     env,
     homeDir,
@@ -229,6 +230,21 @@ function createContext(options: ProtectRuntimeOptions): ProtectContext {
     shellPath: options.shellPath ?? env.SHELL,
     shellRunner: options.shellRunner ?? runShellCommand,
   };
+}
+
+function resolveManagedCliPath(): string {
+  const candidatePaths = [
+    fileURLToPath(new URL('../../dist/cli.js', import.meta.url)),
+    fileURLToPath(new URL('../cli.js', import.meta.url)),
+    process.argv[1] ? resolve(process.argv[1]) : undefined,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+  const foundPath = candidatePaths.find((candidatePath) => existsSync(candidatePath));
+  if (foundPath) {
+    return foundPath;
+  }
+
+  return resolve(join(process.cwd(), 'dist', 'cli.js'));
 }
 
 async function installToolTakeover(

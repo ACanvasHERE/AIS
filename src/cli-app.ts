@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { AisStore, type AisState } from './ais/index.js';
 import {
@@ -445,13 +446,27 @@ function resolveUpdateCurrentPackageRoot(options: CliRunOptions, packageName: st
 
 function buildProtectRuntimeOptions(env: NodeJS.ProcessEnv, options: CliRunOptions): ProtectRuntimeOptions {
   return {
-    aisCliPath: options.currentCliPath ?? process.argv[1],
+    aisCliPath: resolvePackagedCliPath(options.currentCliPath),
     env,
     nodePath: options.protectNodePath,
     now: options.now,
     shellPath: options.protectShellPath,
     shellRunner: options.protectShellRunner,
   };
+}
+
+function resolvePackagedCliPath(currentCliPath?: string): string | undefined {
+  if (currentCliPath) {
+    return currentCliPath;
+  }
+
+  const candidatePaths = [
+    fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
+    fileURLToPath(new URL('./cli.js', import.meta.url)),
+    process.argv[1],
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+  return candidatePaths.find((candidatePath) => existsSync(candidatePath));
 }
 
 function writeProtectMessages(

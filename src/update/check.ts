@@ -75,7 +75,7 @@ export async function maybeCheckForUpdates(
   }
 
   try {
-    const remoteVersion = await fetchRemoteVersion(settings.channel, options.fetchImpl ?? fetch, options);
+    const remoteVersion = await fetchRemoteVersion(settings.channel, options.fetchImpl ?? fetch, options.packageInfo.name);
     nextState.update.lastCheckedAt = now;
     nextState.update.lastError = undefined;
     nextState.update.lastRemoteVersion = remoteVersion;
@@ -172,9 +172,9 @@ export function compareVersions(left: string, right: string): number {
 async function fetchRemoteVersion(
   channel: UpdateChannel,
   fetchImpl: typeof fetch,
-  options: MaybeCheckForUpdatesOptions,
+  packageName: string,
 ): Promise<string> {
-  const response = await fetchWithTimeout(fetchImpl, buildRegistryUrl(options.packageInfo.name, options.env));
+  const response = await fetchWithTimeout(fetchImpl, buildRegistryUrl(packageName));
   const payload = (await response.json()) as unknown;
   const manifest = parseRegistryManifest(payload);
   const version = manifest['dist-tags'][channel];
@@ -215,8 +215,8 @@ async function fetchWithTimeout(fetchImpl: typeof fetch, url: string): Promise<R
   }
 }
 
-function buildRegistryUrl(packageName: string, env?: NodeJS.ProcessEnv): string {
-  const base = normalizeRegistryBase(env?.npm_config_registry ?? env?.NPM_CONFIG_REGISTRY ?? DEFAULT_REGISTRY_URL);
+function buildRegistryUrl(packageName: string): string {
+  const base = normalizeRegistryBase(DEFAULT_REGISTRY_URL);
   return new URL(encodeURIComponent(packageName), base).toString();
 }
 
@@ -292,7 +292,7 @@ function formatUpdateAvailableMessage(
   remoteVersion: string,
   channel: UpdateChannel,
 ): string {
-  return `Update available: ${packageName}@${remoteVersion} on ${channel}. Continuing with ${localVersion}. Install manually for now: npm install -g ${packageName}@${remoteVersion}`;
+  return `Update available: ${packageName}@${remoteVersion} on ${channel}. Continuing with ${localVersion}. Install manually for now: npm install -g ${packageName}@${remoteVersion} --registry ${DEFAULT_REGISTRY_URL}`;
 }
 
 function formatUpToDateMessage(localVersion: string, channel: UpdateChannel): string {

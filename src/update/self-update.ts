@@ -8,6 +8,7 @@ import { cloneAutomationState, type AutomationState } from '../automation/index.
 import { maybeCheckForUpdates, type MaybeCheckForUpdatesOptions, type UpdateCheckSettings } from './check.js';
 
 const NPM_COMMAND = 'npm';
+const NPM_REGISTRY_URL = 'https://registry.npmjs.org';
 const UPDATE_LOCK_STALE_MS = 30 * 60_000;
 
 export interface UpdateCommandResult {
@@ -197,7 +198,16 @@ async function applyAvailableUpdate(
 
     const installResult = await runner(
       NPM_COMMAND,
-      ['install', '-g', `${update.packageName}@${update.remoteVersion}`, '--loglevel=error', '--fund=false', '--audit=false'],
+      [
+        'install',
+        '-g',
+        `${update.packageName}@${update.remoteVersion}`,
+        '--registry',
+        NPM_REGISTRY_URL,
+        '--loglevel=error',
+        '--fund=false',
+        '--audit=false',
+      ],
       {
         env: options.env,
       },
