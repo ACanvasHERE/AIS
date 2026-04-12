@@ -25,6 +25,31 @@ npm install -g @tokentestai/ais
 
 安装完成后，使用的命令名是 `ais`。
 
+大多数情况下，安装完成后重新打开一个终端，就会自动开始保护 `claude`、`codex`、`openclaw`。
+
+## 安装后怎么确认已经生效
+
+先重新打开一个终端，再执行：
+
+```bash
+ais protect status
+type -a claude codex openclaw
+```
+
+你应该看到：
+
+- `ais protect status` 里三条工具显示 `applied=yes`
+- `claude` 和 `openclaw` 前面优先出现 `~/.ais/bin/...`
+- `codex` 可能仍显示原来的 `~/.npm-global/bin/codex`，这是正常的，因为 AIS 会直接在原位置接管它
+
+如果系统钥匙串不可用，或者你看到了系统钥匙串相关弹窗，可以先手动设置一个本地密码：
+
+```bash
+export AIS_VAULT_PASSWORD='your-local-password'
+```
+
+然后重新打开终端，再执行上面的检查命令。
+
 当前状态：
 
 - 原生支持 `macOS` 和 `Linux`

@@ -25,6 +25,31 @@ npm install -g @tokentestai/ais
 
 After installation, the command name is `ais`.
 
+In most cases, opening a new terminal once is enough for AIS to start protecting `claude`, `codex`, and `openclaw` automatically.
+
+## How To Confirm It Is Active
+
+Open a new terminal, then run:
+
+```bash
+ais protect status
+type -a claude codex openclaw
+```
+
+You should see:
+
+- all three tools show `applied=yes` in `ais protect status`
+- `claude` and `openclaw` resolve to `~/.ais/bin/...` first
+- `codex` may still show the original `~/.npm-global/bin/codex` path, which is normal because AIS can take it over in place
+
+If the system keychain is unavailable, or macOS shows a keychain dialog, set a local password first:
+
+```bash
+export AIS_VAULT_PASSWORD='your-local-password'
+```
+
+Then open a new terminal and run the check commands again.
+
 Current status:
 
 - Native support for `macOS` and `Linux`
