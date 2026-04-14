@@ -374,6 +374,26 @@ async function installPrependTakeover(
   commandInfo: ToolCommandInfo,
   context: ProtectContext,
 ): Promise<ToolOperationResult> {
+  if (!commandInfo.firstPath) {
+    if (runtime.managedPath?.startsWith(context.managedBinDir)) {
+      const removed = await removeToolTakeover(tool, runtime, context, false);
+      if (removed.error) {
+        return removed;
+      }
+    }
+
+    const warning = formatMissingCommandMessage(tool);
+    return {
+      runtime: buildRuntimeState({
+        installed: false,
+        lastError: warning,
+        suspended: false,
+      }, context),
+      usesManagedBin: false,
+      warning,
+    };
+  }
+
   if (runtime.installed && runtime.managedPath && !runtime.managedPath.startsWith(context.managedBinDir)) {
     const removed = await removeToolTakeover(tool, runtime, context, false);
     if (removed.error) {
@@ -386,9 +406,6 @@ async function installPrependTakeover(
   await writeExecutableFile(managedPath, createWrapperScript(tool, managedPath, context));
 
   const warningParts: string[] = [];
-  if (!commandInfo.firstPath) {
-    warningParts.push(`${tool}: original command is not installed yet; AIS will wait for it to appear later.`);
-  }
   const collisionMessage = formatCollisionMessage(tool, commandInfo.collision);
   if (collisionMessage) {
     warningParts.push(collisionMessage);
@@ -765,6 +782,10 @@ function buildRuntimeState(
     ...state,
     lastChangedAt: context.now(),
   };
+}
+
+function formatMissingCommandMessage(tool: ProtectTool): string {
+  return `${tool}: original command is not installed; AIS left this command unchanged. Install it first, then run "ais protect on ${tool}".`;
 }
 
 function formatCollisionMessage(tool: ProtectTool, collision: ToolCommandInfo['collision']): string | undefined {

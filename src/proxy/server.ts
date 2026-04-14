@@ -308,10 +308,55 @@ function buildUpstreamUrl(baseUrl: string, requestPath: string): URL {
     ? base.pathname.slice(0, -1)
     : base.pathname;
 
-  base.pathname = `${normalizedBasePath}${requestUrl.pathname}`.replace(/\/{2,}/g, '/');
+  if (
+    normalizedBasePath.length > 0 &&
+    (requestUrl.pathname === normalizedBasePath || requestUrl.pathname.startsWith(`${normalizedBasePath}/`))
+  ) {
+    base.pathname = requestUrl.pathname;
+  } else {
+    base.pathname = `${normalizedBasePath}${requestUrl.pathname}`.replace(/\/{2,}/g, '/');
+  }
   base.search = requestUrl.search;
 
   return base;
+}
+
+function shouldPrefixOpenAiV1(baseUrl: string, requestPath: string): boolean {
+  const base = new URL(baseUrl);
+  const normalizedBasePath = base.pathname.endsWith('/')
+    ? base.pathname.slice(0, -1)
+    : base.pathname;
+  const lowerPath = requestPath.toLowerCase();
+
+  if (lowerPath.startsWith('/v1/')) {
+    return false;
+  }
+
+  const openAiResponsesPath =
+    lowerPath === '/responses' ||
+    lowerPath.startsWith('/responses/') ||
+    lowerPath.startsWith('/chat/') ||
+    lowerPath.startsWith('/completions') ||
+    lowerPath.startsWith('/embeddings') ||
+    lowerPath.startsWith('/audio');
+
+  if (!openAiResponsesPath) {
+    return false;
+  }
+
+  return normalizedBasePath === '/v1' || base.hostname === 'api.openai.com';
+}
+
+function buildProviderUpstreamUrl(
+  provider: ProxyProvider,
+  baseUrl: string,
+  requestPath: string,
+): URL {
+  if (provider === 'openai' && shouldPrefixOpenAiV1(baseUrl, requestPath)) {
+    return buildUpstreamUrl(baseUrl, `/v1${requestPath}`);
+  }
+
+  return buildUpstreamUrl(baseUrl, requestPath);
 }
 
 function normalizeRequestPath(value: string): string {
@@ -376,7 +421,7 @@ function resolveProvider(
   if (anthropicTarget) {
     return {
       provider: 'anthropic',
-      url: buildUpstreamUrl(targets.anthropic, stripProviderPrefix(requestPath, 'anthropic')),
+      url: buildProviderUpstreamUrl('anthropic', targets.anthropic, stripProviderPrefix(requestPath, 'anthropic')),
     };
   }
 
@@ -384,7 +429,7 @@ function resolveProvider(
   if (openAiTarget) {
     return {
       provider: 'openai',
-      url: buildUpstreamUrl(targets.openai, stripProviderPrefix(requestPath, 'openai')),
+      url: buildProviderUpstreamUrl('openai', targets.openai, stripProviderPrefix(requestPath, 'openai')),
     };
   }
 
@@ -400,21 +445,21 @@ function resolveProvider(
   if (anthropicHeadersPresent) {
     return {
       provider: 'anthropic',
-      url: buildUpstreamUrl(targets.anthropic, requestPath),
+      url: buildProviderUpstreamUrl('anthropic', targets.anthropic, requestPath),
     };
   }
 
   if (openAiHeadersPresent) {
     return {
       provider: 'openai',
-      url: buildUpstreamUrl(targets.openai, requestPath),
+      url: buildProviderUpstreamUrl('openai', targets.openai, requestPath),
     };
   }
 
   if (lowerPath.startsWith('/v1/messages') || lowerPath.startsWith('/v1/complete')) {
     return {
       provider: 'anthropic',
-      url: buildUpstreamUrl(targets.anthropic, requestPath),
+      url: buildProviderUpstreamUrl('anthropic', targets.anthropic, requestPath),
     };
   }
 
@@ -428,14 +473,14 @@ function resolveProvider(
   ) {
     return {
       provider: 'openai',
-      url: buildUpstreamUrl(targets.openai, requestPath),
+      url: buildProviderUpstreamUrl('openai', targets.openai, requestPath),
     };
   }
 
   if (defaultProvider) {
     return {
       provider: defaultProvider,
-      url: buildUpstreamUrl(targets[defaultProvider], requestPath),
+      url: buildProviderUpstreamUrl(defaultProvider, targets[defaultProvider], requestPath),
     };
   }
 

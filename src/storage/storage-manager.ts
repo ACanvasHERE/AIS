@@ -13,6 +13,7 @@ interface KeychainStoreLike {
 }
 
 export interface StorageManagerOptions {
+  allowEphemeralFallback?: boolean;
   env?: NodeJS.ProcessEnv;
   keychain?: KeychainStoreLike;
   persistDetectedSecrets?: boolean;
@@ -63,7 +64,17 @@ export class StorageManager {
   }
 
   async save(vault: SessionVault): Promise<void> {
-    const password = await this.getWritablePassword();
+    let password: string;
+    try {
+      password = await this.getWritablePassword();
+    } catch (error) {
+      if (this.options.allowEphemeralFallback && !EncryptedVault.exists(this.options.vaultPath)) {
+        return;
+      }
+
+      throw error;
+    }
+
     await EncryptedVault.save(
       buildVaultRecord(vault, this.options.persistDetectedSecrets !== false),
       password,
@@ -72,9 +83,19 @@ export class StorageManager {
   }
 
   async setup(): Promise<boolean> {
-    const password = await this.getWritablePassword();
     if (EncryptedVault.exists(this.options.vaultPath)) {
       return false;
+    }
+
+    let password: string;
+    try {
+      password = await this.getWritablePassword();
+    } catch (error) {
+      if (this.options.allowEphemeralFallback) {
+        return false;
+      }
+
+      throw error;
     }
 
     await EncryptedVault.save({}, password, this.options.vaultPath);

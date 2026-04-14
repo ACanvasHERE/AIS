@@ -100,6 +100,7 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
   const stderr = options.stderr ?? process.stderr;
   const env = options.env ?? process.env;
   const invocation = parseCliInvocation(args);
+  const protectedLaunch = invocation.type === 'wrap' ? isProtectedWrapperLaunch(invocation.command, env) : false;
 
   try {
     if (invocation.type === 'error') {
@@ -123,6 +124,7 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
     const packageInfo = getPackageInfo();
     const updateCurrentPackageRoot = resolveUpdateCurrentPackageRoot(options, packageInfo.name);
     const storageManager = new StorageManager({
+      allowEphemeralFallback: protectedLaunch,
       env,
       persistDetectedSecrets: config.storage.persistSecrets,
       vaultPath: expandHomePath(config.storage.vaultPath),
@@ -342,7 +344,7 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
 
       case 'wrap': {
         const created = await storageManager.setup();
-        if (created) {
+        if (created && !protectedLaunch) {
           writeWelcome(stdout, storageManager.getVaultPath());
         }
 
@@ -384,6 +386,7 @@ export async function runCli(args: string[], options: CliRunOptions = {}): Promi
                 },
           storage: {
             env,
+            allowEphemeralFallback: protectedLaunch,
             persistDetectedSecrets: config.storage.persistSecrets,
             vaultPath: storageManager.getVaultPath(),
           },
@@ -467,6 +470,10 @@ function resolvePackagedCliPath(currentCliPath?: string): string | undefined {
   ].filter((value): value is string => typeof value === 'string' && value.length > 0);
 
   return candidatePaths.find((candidatePath) => existsSync(candidatePath));
+}
+
+function isProtectedWrapperLaunch(command: string, env: NodeJS.ProcessEnv): boolean {
+  return env.AIS_PROTECT_WRAPPER_ACTIVE === '1' && env.AIS_PROTECT_TOOL === command;
 }
 
 function writeProtectMessages(
